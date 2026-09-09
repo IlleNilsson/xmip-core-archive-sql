@@ -12,25 +12,23 @@
 //! `identifier`, `bytes`, `metadata` — and `archived_at`, so an operator loads
 //! the script into whatever database is to hand, and this crate reads it
 //! without one. The receipt carries the SHA-256 of the bytes, and `restore`
-//! checks it.
+//! checks it. The metadata text, the moment, the safe script name and the
+//! checksum come from the capability — `archive::metadata`, `archive::timestamp`,
+//! `archive::layout` and `archive::checksum` (ADR-0044); the statement itself is
+//! this technology's own.
 
-mod clock;
 mod statement;
 
-use std::fmt::{Display, Write};
+use std::fmt::Display;
 use std::fs::OpenOptions;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
-use archive::{ArchiveError, ArchiveItem, ArchiveReceipt, ArchiveStore};
-use sha2::{Digest, Sha256};
+use archive::checksum::sha256_hex;
+use archive::layout::sanitise;
+use archive::{ArchiveError, ArchiveItem, ArchiveReceipt, ArchiveStore, metadata, timestamp};
 
 use crate::statement::Statement;
-
-/// Record and unit separators encode the metadata pairs into the one text
-/// column: pairs split on record, key from value on unit.
-const PAIR: char = '\u{1e}';
-const KV: char = '\u{1f}';
 
 /// An archive that persists items as `INSERT` statements in scripts rooted at a
 /// directory, one script per data type.
@@ -86,8 +84,8 @@ impl ArchiveStore for SqlScriptArchive {
             data_type: item.data_type,
             identifier: item.identifier,
             bytes: item.bytes,
-            metadata: encode_metadata(&item.metadata),
-            archived_at: clock::now(),
+            metadata: metadata::encode(&item.metadata),
+            archived_at: timestamp::now(),
         };
         let mut file = OpenOptions::new()
             .create(true)
@@ -97,7 +95,7 @@ impl ArchiveStore for SqlScriptArchive {
         writeln!(file, "{}", statement.to_sql()).map_err(|cause| at(&path, cause))?;
         Ok(ArchiveReceipt {
             location: format!("{}{script}#{}", self.prefix(), statement.identifier),
-            checksum: Some(sha256(&statement.bytes)),
+            checksum: Some(sha256_hex(&statement.bytes)),
         })
     }
 
@@ -120,7 +118,7 @@ impl ArchiveStore for SqlScriptArchive {
             message: format!("no statement for {identifier} in {}", receipt.location),
         })?;
         if let Some(expected) = &receipt.checksum {
-            let actual = sha256(&statement.bytes);
+            let actual = sha256_hex(&statement.bytes);
             if actual != *expected {
                 return Err(ArchiveError {
                     message: format!(
@@ -134,53 +132,9 @@ impl ArchiveStore for SqlScriptArchive {
             data_type: statement.data_type,
             identifier: statement.identifier,
             bytes: statement.bytes,
-            metadata: decode_metadata(&statement.metadata),
+            metadata: metadata::decode(&statement.metadata),
         })
     }
-}
-
-fn encode_metadata(pairs: &[(String, String)]) -> String {
-    pairs
-        .iter()
-        .map(|(key, value)| format!("{key}{KV}{value}"))
-        .collect::<Vec<_>>()
-        .join(&PAIR.to_string())
-}
-
-fn decode_metadata(encoded: &str) -> Vec<(String, String)> {
-    if encoded.is_empty() {
-        return Vec::new();
-    }
-    encoded
-        .split(PAIR)
-        .filter_map(|pair| pair.split_once(KV))
-        .map(|(key, value)| (key.to_string(), value.to_string()))
-        .collect()
-}
-
-/// The SHA-256 of `bytes` as lowercase hex, the receipt's checksum.
-fn sha256(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .fold(String::with_capacity(64), |mut hex, byte| {
-            let _ = write!(hex, "{byte:02x}");
-            hex
-        })
-}
-
-/// Make one path segment safe: anything but a plain filename character becomes an
-/// underscore, so a data type like `hl7/v2` is a valid script name.
-fn sanitise(segment: &str) -> String {
-    segment
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
 }
 
 /// `path` as the path part of a URI: forward slashes, and a leading slash so a
@@ -241,7 +195,7 @@ mod tests {
             "{}",
             receipt.location
         );
-        assert_eq!(receipt.checksum, Some(sha256(&original.bytes)));
+        assert_eq!(receipt.checksum, Some(sha256_hex(&original.bytes)));
         let restored = store.restore(&receipt).expect("restore");
         assert_eq!(restored, original, "the script gives the item back");
         std::fs::remove_dir_all(&root).ok();
