@@ -79,7 +79,7 @@ impl ArchiveStore for SqlScriptArchive {
     fn archive(&self, item: ArchiveItem) -> Result<ArchiveReceipt, ArchiveError> {
         let script = format!("{}.sql", sanitise(&item.data_type));
         let path = self.root.join(&script);
-        std::fs::create_dir_all(&self.root).map_err(error)?;
+        std::fs::create_dir_all(&self.root).map_err(ArchiveError::caused_by)?;
         let statement = Statement {
             data_type: item.data_type,
             identifier: item.identifier,
@@ -154,29 +154,15 @@ fn at(path: &Path, cause: impl Display) -> ArchiveError {
     }
 }
 
-fn error(cause: impl Display) -> ArchiveError {
-    ArchiveError {
-        message: cause.to_string(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use archive::fixture::item;
 
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("xmip-sql-{name}-{}", std::process::id()));
         std::fs::remove_dir_all(&dir).ok();
         dir
-    }
-
-    fn item(id: &str) -> ArchiveItem {
-        ArchiveItem {
-            data_type: "json".to_string(),
-            identifier: id.to_string(),
-            bytes: b"{\"kept\":true}".to_vec(),
-            metadata: vec![("source".to_string(), "playground".to_string())],
-        }
     }
 
     #[test]
