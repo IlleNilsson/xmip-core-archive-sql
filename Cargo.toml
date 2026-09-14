@@ -18,6 +18,11 @@ path = "src/lib.rs"
 # (repository-model.md). The ArchiveStore trait and its types live there.
 archive = { package = "xmip-core-archive", git = "https://github.com/IlleNilsson/xmip-core-archive", branch = "main" }
 
+[dev-dependencies]
+# The tests archive the capability's fixture item (ADR-0044); the feature
+# is enabled here so it is never part of a production build.
+archive = { package = "xmip-core-archive", git = "https://github.com/IlleNilsson/xmip-core-archive", branch = "main", features = ["test-support"] }
+
 [lints.rust]
 unsafe_code = "forbid"
 
