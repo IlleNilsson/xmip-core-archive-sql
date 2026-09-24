@@ -2,10 +2,12 @@
 //! without a parser crate: the statement has a fixed shape, and reading it back
 //! is a matter of two literal forms — a string with its quotes doubled, and a
 //! hex string `X'...'` for the bytes. Both are ISO/IEC 9075, so the script
-//! loads into any database an operator has.
+//! loads into any database an operator has. The string literal is
+//! `codec::sql`'s, written and read there for every SQL crate.
 
 use codec::char_reader::CharReader;
-use std::fmt::Write;
+use codec::hex;
+use codec::sql::Delimiter;
 
 /// The row one statement carries: the four item columns every archive
 /// technology shares, `metadata` already encoded to one text, and the moment.
@@ -28,11 +30,11 @@ impl Statement {
     pub fn to_sql(&self) -> String {
         format!(
             "{HEAD}{}, {}, X'{}', {}, {});",
-            quote(&self.data_type),
-            quote(&self.identifier),
-            hex(&self.bytes),
-            quote(&self.metadata),
-            quote(&self.archived_at)
+            Delimiter::STRING.quote(&self.data_type),
+            Delimiter::STRING.quote(&self.identifier),
+            hex::encode(&self.bytes),
+            Delimiter::STRING.quote(&self.metadata),
+            Delimiter::STRING.quote(&self.archived_at)
         )
     }
 
@@ -86,16 +88,15 @@ fn expect(reader: &mut CharReader<'_>, token: &str) -> Result<(), String> {
 
 /// A string literal: `'...'` with an embedded quote written twice.
 fn string(reader: &mut CharReader<'_>) -> Result<String, String> {
-    expect(reader, "'")?;
-    let mut out = String::new();
-    loop {
-        match reader.bump() {
-            Some('\'') if reader.eat('\'') => out.push('\''),
-            Some('\'') => return Ok(out),
-            Some(other) => out.push(other),
-            None => return Err("a string literal is not terminated".to_string()),
-        }
+    if reader.peek() != Some('\'') {
+        return Err(format!(
+            "expected a string literal at column {}",
+            reader.column() + HEAD.len()
+        ));
     }
+    Delimiter::STRING
+        .read(reader)
+        .map_err(|error| error.message)
 }
 
 /// A hex string literal: `X'6b...'`.
@@ -105,35 +106,7 @@ fn hex_literal(reader: &mut CharReader<'_>) -> Result<Vec<u8>, String> {
     if !reader.eat('\'') {
         return Err("a hex literal is not terminated".to_string());
     }
-    unhex(digits)
-}
-
-/// `text` as an SQL string literal.
-fn quote(text: &str) -> String {
-    format!("'{}'", text.replace('\'', "''"))
-}
-
-/// `bytes` as lowercase hex digits.
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().fold(String::new(), |mut out, byte| {
-        let _ = write!(out, "{byte:02x}");
-        out
-    })
-}
-
-fn unhex(digits: &str) -> Result<Vec<u8>, String> {
-    if !digits.len().is_multiple_of(2) {
-        return Err(format!("a hex literal of {} digits", digits.len()));
-    }
-    (0..digits.len())
-        .step_by(2)
-        .map(|start| {
-            digits
-                .get(start..start + 2)
-                .and_then(|pair| u8::from_str_radix(pair, 16).ok())
-                .ok_or_else(|| format!("not hex digits in X'{digits}'"))
-        })
-        .collect()
+    hex::decode(digits).map_err(|error| error.message)
 }
 
 #[cfg(test)]
