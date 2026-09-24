@@ -46,7 +46,7 @@ impl SqlScriptArchive {
 
     /// What every receipt of this root shares: `sql:///<root>/`.
     fn prefix(&self) -> String {
-        format!("sql://{}/", uri_path(&self.root))
+        format!("sql://{}/", net::uri::path_of(&self.root))
     }
 
     /// The script and identifier a receipt names, refusing a receipt from
@@ -134,17 +134,6 @@ impl ArchiveStore for SqlScriptArchive {
             bytes: statement.bytes,
             metadata: metadata::decode(&statement.metadata),
         })
-    }
-}
-
-/// `path` as the path part of a URI: forward slashes, and a leading slash so a
-/// Windows drive reads `/C:/...` after the `sql://` authority.
-fn uri_path(path: &Path) -> String {
-    let text = path.display().to_string().replace('\\', "/");
-    if text.starts_with('/') {
-        text
-    } else {
-        format!("/{text}")
     }
 }
 
