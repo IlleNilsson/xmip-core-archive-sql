@@ -4,6 +4,7 @@
 //! hex string `X'...'` for the bytes. Both are ISO/IEC 9075, so the script
 //! loads into any database an operator has.
 
+use codec::char_reader::CharReader;
 use std::fmt::Write;
 
 /// The row one statement carries: the four item columns every archive
@@ -47,18 +48,20 @@ impl Statement {
             .trim()
             .strip_prefix(HEAD)
             .ok_or_else(|| "not an INSERT INTO archive statement".to_string())?;
-        let mut cursor = Cursor { text: rest, at: 0 };
-        let data_type = cursor.string()?;
-        cursor.expect(", ")?;
-        let identifier = cursor.string()?;
-        cursor.expect(", ")?;
-        let bytes = cursor.hex()?;
-        cursor.expect(", ")?;
-        let metadata = cursor.string()?;
-        cursor.expect(", ")?;
-        let archived_at = cursor.string()?;
-        cursor.expect(");")?;
-        cursor.end()?;
+        let mut reader = CharReader::new(rest);
+        let data_type = string(&mut reader)?;
+        expect(&mut reader, ", ")?;
+        let identifier = string(&mut reader)?;
+        expect(&mut reader, ", ")?;
+        let bytes = hex_literal(&mut reader)?;
+        expect(&mut reader, ", ")?;
+        let metadata = string(&mut reader)?;
+        expect(&mut reader, ", ")?;
+        let archived_at = string(&mut reader)?;
+        expect(&mut reader, ");")?;
+        if !reader.is_done() {
+            return Err(format!("text after the statement: {:?}", reader.rest()));
+        }
         Ok(Self {
             data_type,
             identifier,
@@ -69,69 +72,40 @@ impl Statement {
     }
 }
 
-/// A position in the text after `VALUES (`. Every token it consumes is ASCII
-/// or ends at an ASCII quote, so the position is always a character boundary.
-struct Cursor<'a> {
-    text: &'a str,
-    at: usize,
+/// Take `token` from the text after `VALUES (`, or refuse naming the column.
+fn expect(reader: &mut CharReader<'_>, token: &str) -> Result<(), String> {
+    if reader.eat_str(token) {
+        Ok(())
+    } else {
+        Err(format!(
+            "expected {token:?} at column {}",
+            reader.column() + HEAD.len()
+        ))
+    }
 }
 
-impl Cursor<'_> {
-    fn rest(&self) -> &str {
-        self.text.get(self.at..).unwrap_or("")
-    }
-
-    fn expect(&mut self, token: &str) -> Result<(), String> {
-        if self.rest().starts_with(token) {
-            self.at += token.len();
-            Ok(())
-        } else {
-            Err(format!(
-                "expected {token:?} at column {}",
-                self.at + HEAD.len()
-            ))
+/// A string literal: `'...'` with an embedded quote written twice.
+fn string(reader: &mut CharReader<'_>) -> Result<String, String> {
+    expect(reader, "'")?;
+    let mut out = String::new();
+    loop {
+        match reader.bump() {
+            Some('\'') if reader.eat('\'') => out.push('\''),
+            Some('\'') => return Ok(out),
+            Some(other) => out.push(other),
+            None => return Err("a string literal is not terminated".to_string()),
         }
     }
+}
 
-    fn end(&self) -> Result<(), String> {
-        if self.rest().is_empty() {
-            Ok(())
-        } else {
-            Err(format!("text after the statement: {:?}", self.rest()))
-        }
+/// A hex string literal: `X'6b...'`.
+fn hex_literal(reader: &mut CharReader<'_>) -> Result<Vec<u8>, String> {
+    expect(reader, "X'")?;
+    let digits = reader.take_while(|character| character != '\'');
+    if !reader.eat('\'') {
+        return Err("a hex literal is not terminated".to_string());
     }
-
-    /// A string literal: `'...'` with an embedded quote written twice.
-    fn string(&mut self) -> Result<String, String> {
-        self.expect("'")?;
-        let mut out = String::new();
-        loop {
-            let rest = self.rest();
-            let end = rest
-                .find('\'')
-                .ok_or_else(|| "a string literal is not terminated".to_string())?;
-            out.push_str(&rest[..end]);
-            self.at += end + 1;
-            if self.rest().starts_with('\'') {
-                out.push('\'');
-                self.at += 1;
-            } else {
-                return Ok(out);
-            }
-        }
-    }
-
-    /// A hex string literal: `X'6b...'`.
-    fn hex(&mut self) -> Result<Vec<u8>, String> {
-        self.expect("X'")?;
-        let rest = self.rest();
-        let end = rest
-            .find('\'')
-            .ok_or_else(|| "a hex literal is not terminated".to_string())?;
-        let bytes = unhex(&rest[..end]);
-        self.at += end + 1;
-        bytes
-    }
+    unhex(digits)
 }
 
 /// `text` as an SQL string literal.
@@ -217,6 +191,24 @@ mod tests {
         let line = format!("{HEAD}'json', 'open");
         let refused = Statement::parse(&line).expect_err("unterminated");
         assert!(refused.contains("not terminated"), "{refused}");
+    }
+
+    #[test]
+    fn multibyte_text_parses_back_and_a_cut_is_refused_without_panic() {
+        let wide = Statement {
+            identifier: "Zoë's 名前\u{a0}\u{1f600}".to_string(),
+            metadata: "größe\u{3000}é".to_string(),
+            ..statement()
+        };
+        let sql = wide.to_sql();
+        assert_eq!(Statement::parse(&sql).expect("parse"), wide);
+        for cut in (0..sql.len()).filter(|&at| sql.is_char_boundary(at)) {
+            assert!(Statement::parse(&sql[..cut]).is_err(), "{cut}");
+        }
+        let line = format!("{HEAD}'json',\u{a0}'id', X'', '', '');");
+        assert!(Statement::parse(&line).is_err());
+        let line = format!("{HEAD}'json', 'id', X'é', '', '');");
+        assert!(Statement::parse(&line).is_err());
     }
 
     #[test]

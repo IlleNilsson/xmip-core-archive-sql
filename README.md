@@ -4,6 +4,10 @@ SQL script archive target: one item is one INSERT in a vendor-neutral script
 any database loads. A technology of
 [xmip-core-archive](https://github.com/IlleNilsson/xmip-core-archive).
 
+A script line is read back through `xmip-core-library-codec`'s character
+reader, so text outside ASCII round-trips and a line cut anywhere is
+refused, never a panic.
+
 ## Toolchain
 
 `rust-toolchain.toml` pins the toolchain for the whole estate. Do not change it
