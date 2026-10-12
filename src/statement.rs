@@ -2,12 +2,10 @@
 //! without a parser crate: the statement has a fixed shape, and reading it back
 //! is a matter of two literal forms — a string with its quotes doubled, and a
 //! hex string `X'...'` for the bytes. Both are ISO/IEC 9075, so the script
-//! loads into any database an operator has. The string literal is
-//! `codec::sql`'s, written and read there for every SQL crate.
+//! loads into any database an operator has. Both literals are ISO SQL's as
+//! `xmip-core-library-sql` writes and reads them (`sql::STANDARD`).
 
-use codec::char_reader::CharReader;
-use codec::hex;
-use codec::sql::Delimiter;
+use sql::{Literal, STANDARD};
 
 /// The row one statement carries: the four item columns every archive
 /// technology shares, `metadata` already encoded to one text, and the moment.
@@ -29,12 +27,12 @@ impl Statement {
     #[must_use]
     pub fn to_sql(&self) -> String {
         format!(
-            "{HEAD}{}, {}, X'{}', {}, {});",
-            Delimiter::STRING.quote(&self.data_type),
-            Delimiter::STRING.quote(&self.identifier),
-            hex::encode(&self.bytes),
-            Delimiter::STRING.quote(&self.metadata),
-            Delimiter::STRING.quote(&self.archived_at)
+            "{HEAD}{}, {}, {}, {}, {});",
+            STANDARD.quote_text(&self.data_type),
+            STANDARD.quote_text(&self.identifier),
+            STANDARD.quote_bytes(&self.bytes),
+            STANDARD.quote_text(&self.metadata),
+            STANDARD.quote_text(&self.archived_at)
         )
     }
 
@@ -46,23 +44,22 @@ impl Statement {
     /// literal left unterminated, a hex literal with an odd digit or an odd
     /// count of them, or anything after the closing `);`.
     pub fn parse(line: &str) -> Result<Self, String> {
+        let line = line.trim();
         let rest = line
-            .trim()
             .strip_prefix(HEAD)
             .ok_or_else(|| "not an INSERT INTO archive statement".to_string())?;
-        let mut reader = CharReader::new(rest);
-        let data_type = string(&mut reader)?;
-        expect(&mut reader, ", ")?;
-        let identifier = string(&mut reader)?;
-        expect(&mut reader, ", ")?;
-        let bytes = hex_literal(&mut reader)?;
-        expect(&mut reader, ", ")?;
-        let metadata = string(&mut reader)?;
-        expect(&mut reader, ", ")?;
-        let archived_at = string(&mut reader)?;
-        expect(&mut reader, ");")?;
-        if !reader.is_done() {
-            return Err(format!("text after the statement: {:?}", reader.rest()));
+        let (data_type, rest) = string(line, rest)?;
+        let rest = expect(line, rest, ", ")?;
+        let (identifier, rest) = string(line, rest)?;
+        let rest = expect(line, rest, ", ")?;
+        let (bytes, rest) = hex_literal(line, rest)?;
+        let rest = expect(line, rest, ", ")?;
+        let (metadata, rest) = string(line, rest)?;
+        let rest = expect(line, rest, ", ")?;
+        let (archived_at, rest) = string(line, rest)?;
+        let rest = expect(line, rest, ");")?;
+        if !rest.is_empty() {
+            return Err(format!("text after the statement: {rest:?}"));
         }
         Ok(Self {
             data_type,
@@ -74,39 +71,49 @@ impl Statement {
     }
 }
 
-/// Take `token` from the text after `VALUES (`, or refuse naming the column.
-fn expect(reader: &mut CharReader<'_>, token: &str) -> Result<(), String> {
-    if reader.eat_str(token) {
-        Ok(())
-    } else {
-        Err(format!(
-            "expected {token:?} at column {}",
-            reader.column() + HEAD.len()
-        ))
-    }
+/// The column of `line`, counted in characters from 1, that `rest` starts at.
+fn column(line: &str, rest: &str) -> usize {
+    line[..line.len() - rest.len()].chars().count() + 1
+}
+
+/// `rest` after `token`, or a refusal naming the column.
+fn expect<'a>(line: &str, rest: &'a str, token: &str) -> Result<&'a str, String> {
+    rest.strip_prefix(token)
+        .ok_or_else(|| format!("expected {token:?} at column {}", column(line, rest)))
 }
 
 /// A string literal: `'...'` with an embedded quote written twice.
-fn string(reader: &mut CharReader<'_>) -> Result<String, String> {
-    if reader.peek() != Some('\'') {
+fn string<'a>(line: &str, rest: &'a str) -> Result<(String, &'a str), String> {
+    if !rest.starts_with('\'') {
         return Err(format!(
             "expected a string literal at column {}",
-            reader.column() + HEAD.len()
+            column(line, rest)
         ));
     }
-    Delimiter::STRING
-        .read(reader)
-        .map_err(|error| error.message)
+    match STANDARD.read_literal(rest) {
+        Some((Literal::Text(text), after)) => Ok((text, after)),
+        _ => Err(format!(
+            "the string literal at column {} is not terminated",
+            column(line, rest)
+        )),
+    }
 }
 
 /// A hex string literal: `X'6b...'`.
-fn hex_literal(reader: &mut CharReader<'_>) -> Result<Vec<u8>, String> {
-    expect(reader, "X'")?;
-    let digits = reader.take_while(|character| character != '\'');
-    if !reader.eat('\'') {
-        return Err("a hex literal is not terminated".to_string());
+fn hex_literal<'a>(line: &str, rest: &'a str) -> Result<(Vec<u8>, &'a str), String> {
+    if !rest.starts_with("X'") {
+        return Err(format!(
+            "expected a hex literal at column {}",
+            column(line, rest)
+        ));
     }
-    hex::decode(digits).map_err(|error| error.message)
+    match STANDARD.read_literal(rest) {
+        Some((Literal::Bytes(bytes), after)) => Ok((bytes, after)),
+        _ => Err(format!(
+            "the hex literal at column {} is not terminated or not whole bytes",
+            column(line, rest)
+        )),
+    }
 }
 
 #[cfg(test)]
