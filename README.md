@@ -4,10 +4,10 @@ SQL script archive target: one item is one INSERT in a vendor-neutral script
 any database loads. A technology of
 [xmip-core-archive](https://github.com/IlleNilsson/xmip-core-archive).
 
-A script line is read back through `xmip-core-library-codec`'s character
-reader, so text outside ASCII round-trips and a line cut anywhere is
-refused, never a panic; its string literals are written and read by the
-codec's `sql` module, the one SQL quoting in the estate.
+A script line's literals — a string with its quote doubled, the bytes as
+`X'…'` — are ISO SQL's, written and read by `xmip-core-library-sql`
+(`sql::STANDARD`), the one SQL in the estate, so text outside ASCII
+round-trips and a line cut anywhere is refused, never a panic.
 
 This is a script on disk, not a table on a server: the archives in a SQL
 server's table are the capability's `archive::sql::SqlArchive`.
