@@ -25,7 +25,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use archive::checksum::sha256_hex;
-use archive::layout::sanitise;
+use archive::layout::sanitize;
 use archive::{ArchiveError, ArchiveItem, ArchiveReceipt, ArchiveStore, metadata, timestamp};
 
 use crate::statement::Statement;
@@ -50,7 +50,7 @@ impl SqlScriptArchive {
     }
 
     /// The script and identifier a receipt names, refusing a receipt from
-    /// under another root. The script name is a sanitised segment, so nothing
+    /// under another root. The script name is a sanitized segment, so nothing
     /// outside the root is ever read.
     fn target_of(&self, location: &str) -> Result<(PathBuf, String), ArchiveError> {
         let rest = location
@@ -66,7 +66,7 @@ impl SqlScriptArchive {
             .filter(|(script, _)| {
                 script
                     .strip_suffix(".sql")
-                    .is_some_and(|stem| !stem.is_empty() && sanitise(stem) == stem)
+                    .is_some_and(|stem| !stem.is_empty() && sanitize(stem) == stem)
             })
             .ok_or_else(|| ArchiveError {
                 message: format!("{location} does not name a script and an identifier"),
@@ -77,7 +77,7 @@ impl SqlScriptArchive {
 
 impl ArchiveStore for SqlScriptArchive {
     fn archive(&self, item: ArchiveItem) -> Result<ArchiveReceipt, ArchiveError> {
-        let script = format!("{}.sql", sanitise(&item.data_type));
+        let script = format!("{}.sql", sanitize(&item.data_type));
         let path = self.root.join(&script);
         std::fs::create_dir_all(&self.root).map_err(ArchiveError::caused_by)?;
         let statement = Statement {
