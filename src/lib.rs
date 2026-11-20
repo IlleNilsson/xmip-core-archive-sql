@@ -147,17 +147,16 @@ fn at(path: &Path, cause: impl Display) -> ArchiveError {
 mod tests {
     use super::*;
     use archive::fixture::item;
+    use file::temporary::Folder;
 
-    fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("xmip-sql-{name}-{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
-        dir
+    fn scratch(name: &str) -> Folder {
+        Folder::new(&format!("archive-sql-{name}"))
     }
 
     #[test]
     fn an_archived_item_restores_from_its_statement() {
         let root = scratch("roundtrip");
-        let store = SqlScriptArchive::new(&root);
+        let store = SqlScriptArchive::new(&*root);
         let original = item("json#1");
         let receipt = store.archive(original.clone()).expect("archive");
         assert!(
@@ -173,13 +172,12 @@ mod tests {
         assert_eq!(receipt.checksum, Some(sha256_hex(&original.bytes)));
         let restored = store.restore(&receipt).expect("restore");
         assert_eq!(restored, original, "the script gives the item back");
-        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn two_items_share_one_script_and_each_restores() {
         let root = scratch("two");
-        let store = SqlScriptArchive::new(&root);
+        let store = SqlScriptArchive::new(&*root);
         let first = store.archive(item("json#1")).expect("first");
         let second = store.archive(item("json#2")).expect("second");
         let script = std::fs::read_to_string(root.join("json.sql")).expect("the script");
@@ -189,25 +187,23 @@ mod tests {
             store.restore(&second).expect("restore").identifier,
             "json#2"
         );
-        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn an_identifier_with_a_quote_round_trips() {
         let root = scratch("quote");
-        let store = SqlScriptArchive::new(&root);
+        let store = SqlScriptArchive::new(&*root);
         let original = item("it's 'quoted'");
         let receipt = store.archive(original.clone()).expect("archive");
         let script = std::fs::read_to_string(root.join("json.sql")).expect("the script");
         assert!(script.contains("'it''s ''quoted'''"), "{script}");
         assert_eq!(store.restore(&receipt).expect("restore"), original);
-        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn the_last_statement_for_an_identifier_wins() {
         let root = scratch("last");
-        let store = SqlScriptArchive::new(&root);
+        let store = SqlScriptArchive::new(&*root);
         store.archive(item("json#1")).expect("first");
         let later = ArchiveItem {
             bytes: b"{\"kept\":\"again\"}".to_vec(),
@@ -215,13 +211,12 @@ mod tests {
         };
         let receipt = store.archive(later.clone()).expect("second");
         assert_eq!(store.restore(&receipt).expect("restore"), later);
-        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn an_unknown_identifier_is_an_error() {
         let root = scratch("unknown");
-        let store = SqlScriptArchive::new(&root);
+        let store = SqlScriptArchive::new(&*root);
         store.archive(item("json#1")).expect("archive");
         let receipt = ArchiveReceipt {
             location: format!("{}json.sql#never", store.prefix()),
@@ -230,13 +225,12 @@ mod tests {
         let refused = store.restore(&receipt).expect_err("no such statement");
         assert!(refused.message.contains("never"), "{refused}");
         assert!(refused.message.contains(&receipt.location), "{refused}");
-        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn a_missing_script_is_an_error_naming_the_path() {
         let root = scratch("missing");
-        let store = SqlScriptArchive::new(&root);
+        let store = SqlScriptArchive::new(&*root);
         let receipt = ArchiveReceipt {
             location: format!("{}csv.sql#x", store.prefix()),
             checksum: None,
@@ -247,24 +241,22 @@ mod tests {
             refused.message.contains(&path.display().to_string()),
             "{refused}"
         );
-        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn a_mismatched_checksum_in_the_receipt_is_refused() {
         let root = scratch("mismatch");
-        let store = SqlScriptArchive::new(&root);
+        let store = SqlScriptArchive::new(&*root);
         let mut receipt = store.archive(item("json#1")).expect("archive");
         receipt.checksum = Some("0".repeat(64));
         let refused = store.restore(&receipt).expect_err("the receipt lies");
         assert!(refused.message.contains("checksum mismatch"), "{refused}");
-        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn the_script_is_loadable_text() {
         let root = scratch("loadable");
-        let store = SqlScriptArchive::new(&root);
+        let store = SqlScriptArchive::new(&*root);
         store.archive(item("json#1")).expect("first");
         store.archive(item("json#2")).expect("second");
         let mut csv = item("csv-1");
@@ -276,6 +268,5 @@ mod tests {
             assert!(line.ends_with(");"), "{line}");
         }
         assert!(root.join("csv.sql").exists(), "one script per data type");
-        std::fs::remove_dir_all(&root).ok();
     }
 }
