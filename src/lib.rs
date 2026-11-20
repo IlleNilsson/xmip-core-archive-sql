@@ -12,10 +12,10 @@
 //! `identifier`, `bytes`, `metadata` — and `archived_at`, so an operator loads
 //! the script into whatever database is to hand, and this crate reads it
 //! without one. The receipt carries the SHA-256 of the bytes, and `restore`
-//! checks it. The metadata text, the moment, the safe script name and the
-//! checksum come from the capability — `archive::metadata`, `archive::timestamp`,
-//! `archive::layout` and `archive::checksum` (ADR-0044); the statement itself is
-//! this technology's own.
+//! checks it. The metadata text, the moment, the safe script name, the
+//! checksum and its check come from the capability — `archive::metadata`,
+//! `archive::timestamp`, `archive::layout` and `archive::checksum` (ADR-0044;
+//! the check since 2026-11-20); the statement itself is this technology's own.
 
 mod statement;
 
@@ -24,7 +24,7 @@ use std::fs::OpenOptions;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
-use archive::checksum::sha256_hex;
+use archive::checksum::{self, sha256_hex};
 use archive::layout::sanitize;
 use archive::{ArchiveError, ArchiveItem, ArchiveReceipt, ArchiveStore, metadata, timestamp};
 
@@ -117,17 +117,7 @@ impl ArchiveStore for SqlScriptArchive {
         let statement = found.ok_or_else(|| ArchiveError {
             message: format!("no statement for {identifier} in {}", receipt.location),
         })?;
-        if let Some(expected) = &receipt.checksum {
-            let actual = sha256_hex(&statement.bytes);
-            if actual != *expected {
-                return Err(ArchiveError {
-                    message: format!(
-                        "checksum mismatch at {}: the receipt says {expected}, the script {actual}",
-                        receipt.location
-                    ),
-                });
-            }
-        }
+        checksum::verify(receipt, None, &statement.bytes)?;
         Ok(ArchiveItem {
             data_type: statement.data_type,
             identifier: statement.identifier,
