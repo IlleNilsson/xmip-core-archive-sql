@@ -125,7 +125,7 @@ mod tests {
             data_type: "json".to_string(),
             identifier: "it's #1".to_string(),
             bytes: b"{\"kept\":true}".to_vec(),
-            metadata: "source\u{1f}essentials".to_string(),
+            metadata: "source\u{1f}system-test".to_string(),
             archived_at: "2026-09-09T00:00:00Z".to_string(),
         }
     }
@@ -137,7 +137,7 @@ mod tests {
             sql,
             "INSERT INTO archive (data_type, identifier, bytes, metadata, archived_at) \
              VALUES ('json', 'it''s #1', X'7b226b657074223a747275657d', \
-             'source\u{1f}essentials', '2026-09-09T00:00:00Z');"
+             'source\u{1f}system-test', '2026-09-09T00:00:00Z');"
         );
         assert!(!sql.contains('\n'));
     }
