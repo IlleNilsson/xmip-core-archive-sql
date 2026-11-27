@@ -12,11 +12,6 @@ round-trips and a line cut anywhere is refused, never a panic.
 This is a script on disk, not a table on a server: the archives in a SQL
 server's table are the capability's `archive::sql::SqlArchive`.
 
-## Toolchain
-
-`rust-toolchain.toml` pins the toolchain for the whole estate. Do not change it
-here.
-
 ## Verification
 
 The included workflow is manual-only and calls the versioned shared workflow at
